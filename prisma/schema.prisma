@@ -1,0 +1,31 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model cabinet {
+  id               Int                @id @default(autoincrement())
+  code             String             @unique
+  branch           String
+  status           String
+  last_heartbeat   DateTime?
+  cabinetLines     cabinet_line[]
+}
+
+model cabinet_line {
+  id               Int                @id @default(autoincrement())
+  cabinet_id       Int
+  order            Int
+  state            String
+  soc_battery      Int                @default(0)
+  cabinet          cabinet            @relation(fields: [cabinet_id], references: [id])
+}
