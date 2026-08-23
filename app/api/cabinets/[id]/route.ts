@@ -1,16 +1,23 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { cabinetIdSchema, validationErrorResponse } from "@/lib/validations";
 
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = await params
-    const cabinetId = Number(id);
+    const { id } = await params;
+
+    const parsed = cabinetIdSchema.safeParse({ id });
+    if (!parsed.success) {
+      return NextResponse.json(validationErrorResponse(parsed.error), {
+        status: 400,
+      });
+    }
 
     const cabinet = await prisma.cabinet.findUnique({
-      where: { id: cabinetId },
+      where: { id: parsed.data.id },
       include: {
         cabinetLines: {
           orderBy: { order: "asc" },

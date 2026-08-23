@@ -3,12 +3,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
+import { CABINET_STATUSES } from "@/lib/validations";
+
 const PAGE_SIZE = 10;
 const SEARCH_DEBOUNCE_MS = 300;
 
-interface CabinetLine {
-  state: string;
-}
+/** Filter options shown in the UI; "All" clears the status param. */
+const STATUS_FILTERS = ["ALL", ...CABINET_STATUSES] as const;
 
 interface Cabinet {
   id: number;
@@ -16,11 +17,12 @@ interface Cabinet {
   branch: string;
   status: string;
   last_heartbeat: string | null;
-  cabinetLines: CabinetLine[];
-  _count: {
-    cabinetLines: number;
-    swapTransactions: number;
-  };
+  /** Total battery slots in this cabinet. */
+  slotTotal: number;
+  /** Slots currently in FULL state (aggregated in the database). */
+  slotFull: number;
+  /** Swap transactions in the last 24 hours (aggregated in the database). */
+  swaps24h: number;
 }
 
 interface Pagination {
@@ -65,11 +67,12 @@ export function CabinetTable({ className }: CabinetTableProps = {}) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
-  // The URL is the single source of truth for both values.
+  // The URL is the single source of truth for page, search, and status filter.
   const page = Math.max(1, Number(searchParams.get("page")) || 1);
   const search = searchParams.get("search") ?? "";
+  const status = searchParams.get("status") ?? "";
   const debouncedSearch = useDebouncedValue(search, SEARCH_DEBOUNCE_MS);
-  const queryKey = `${page}|${debouncedSearch}`;
+  const queryKey = `${page}|${debouncedSearch}|${status}`;
 
   const [result, setResult] = useState<FetchResult | null>(null);
   const [error, setError] = useState<{ key: string; message: string } | null>(
@@ -115,6 +118,9 @@ export function CabinetTable({ className }: CabinetTableProps = {}) {
         if (debouncedSearch) {
           params.set("search", debouncedSearch);
         }
+        if (status) {
+          params.set("status", status);
+        }
 
         const res = await fetch(`/api/cabinets?${params.toString()}`, {
           cache: "no-store",
@@ -137,12 +143,15 @@ export function CabinetTable({ className }: CabinetTableProps = {}) {
         });
 
         // Clamp the page if it fell out of range (e.g. filtered results
-        // shrank or items were deleted from the last page).
+        // shrank or items were deleted from the last page). Built directly
+        // (not via updateParams) so this effect's deps stay stable.
         if (payload.pagination.totalPages < page) {
           const clamped = new URLSearchParams();
           clamped.set("page", String(payload.pagination.totalPages));
           if (debouncedSearch) clamped.set("search", debouncedSearch);
-          router.replace(`${pathname}?${clamped.toString()}`, {
+          if (status) clamped.set("status", status);
+          const qs = clamped.toString();
+          router.replace(qs ? `${pathname}?${qs}` : pathname, {
             scroll: false,
           });
         }
@@ -163,7 +172,7 @@ export function CabinetTable({ className }: CabinetTableProps = {}) {
       cancelled = true;
       controller.abort();
     };
-  }, [page, debouncedSearch, queryKey, pathname, router]);
+  }, [page, debouncedSearch, status, queryKey, pathname, router]);
 
   const handleRowClick = (cabinetId: number) => {
     router.push(`/cabinets/${cabinetId}`);
@@ -207,32 +216,61 @@ export function CabinetTable({ className }: CabinetTableProps = {}) {
 
   return (
     <div className={`space-y-4 ${className || ""}`}>
-      {/* Search */}
-      <div className="relative">
-        <svg
-          className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500 pointer-events-none"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={2}
-          viewBox="0 0 24 24"
-          aria-hidden="true"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            d="M21 21l-4.35-4.35M17 11a6 6 0 11-12 0 6 6 0 0112 0z"
+      {/* Search + status filter */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="relative">
+          <svg
+            className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500 pointer-events-none"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2}
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M21 21l-4.35-4.35M17 11a6 6 0 11-12 0 6 6 0 0112 0z"
+            />
+          </svg>
+          <input
+            type="text"
+            value={search}
+            onChange={(e) =>
+              updateParams({ search: e.target.value || null, page: null })
+            }
+            placeholder="Search by code or branch..."
+            aria-label="Search cabinets by code or branch"
+            className="w-full sm:max-w-sm rounded-lg border border-slate-700 bg-slate-800 py-2.5 pl-10 pr-4 text-sm text-slate-200 placeholder:text-slate-500 focus:border-green-500/50 focus:outline-none focus:ring-2 focus:ring-green-500/20 transition-colors"
           />
-        </svg>
-        <input
-          type="text"
-          value={search}
-          onChange={(e) =>
-            updateParams({ search: e.target.value || null, page: null })
-          }
-          placeholder="Search by code or branch..."
-          aria-label="Search cabinets by code or branch"
-          className="w-full sm:max-w-sm rounded-lg border border-slate-700 bg-slate-800 py-2.5 pl-10 pr-4 text-sm text-slate-200 placeholder:text-slate-500 focus:border-green-500/50 focus:outline-none focus:ring-2 focus:ring-green-500/20 transition-colors"
-        />
+        </div>
+
+        {/* Status filter — synced to the ?status= URL param */}
+        <div
+          className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 p-1 self-start sm:self-auto"
+          role="group"
+          aria-label="Filter cabinets by status"
+        >
+          {STATUS_FILTERS.map((option) => {
+            const value = option === "ALL" ? "" : option;
+            const active = status === value;
+            return (
+              <button
+                key={option}
+                type="button"
+                onClick={() => updateParams({ status: value || null, page: null })}
+                aria-pressed={active}
+                className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                  active
+                    ? "bg-green-500 text-white shadow"
+                    : "text-slate-400 hover:bg-slate-700 hover:text-slate-200"
+                }`}
+              >
+                {option}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* Table */}
@@ -271,15 +309,13 @@ export function CabinetTable({ className }: CabinetTableProps = {}) {
                   colSpan={6}
                   className="px-6 py-12 text-center text-sm text-slate-400"
                 >
-                  No cabinets found{search ? ` for "${search}"` : ""}.
+                  No cabinets found
+                  {search ? ` for "${search}"` : ""}
+                  {status ? ` with status ${status}` : ""}.
                 </td>
               </tr>
             ) : (
               cabinets.map((cabinet) => {
-                const fullSlots = cabinet.cabinetLines.filter(
-                  (line) => line.state === "FULL"
-                ).length;
-
                 return (
                   <tr
                     key={cabinet.id}
@@ -312,15 +348,15 @@ export function CabinetTable({ className }: CabinetTableProps = {}) {
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm text-slate-300">
                         <span className="font-medium text-white">
-                          {fullSlots}
+                          {cabinet.slotFull}
                         </span>
                         <span className="text-slate-500"> / </span>
-                        <span>{cabinet._count.cabinetLines}</span>
+                        <span>{cabinet.slotTotal}</span>
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm font-medium text-white">
-                        {cabinet._count.swapTransactions}
+                        {cabinet.swaps24h}
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">

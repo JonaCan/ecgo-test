@@ -1,72 +1,115 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
+import {
+  listCabinetsSchema,
+  searchParamsToObject,
+  validationErrorResponse,
+} from "@/lib/validations";
 
-const DEFAULT_PAGE_SIZE = 10;
-const MAX_PAGE_SIZE = 100;
+interface CabinetRow {
+  id: number;
+  code: string;
+  branch: string;
+  status: string;
+  last_heartbeat: Date | null;
+  slot_total: number;
+  slot_full: number;
+  swap_count_24h: number;
+}
 
+/** Escape LIKE wildcards so user input is matched literally. */
+function escapeLike(term: string): string {
+  return term.replace(/[\\%_]/g, "\\$&");
+}
+
+/**
+ * GET /api/cabinets — list with server-side search, status filter,
+ * DB-level sorting by 24h swap count, and offset pagination.
+ *
+ * Fully translated to raw SQL: aggregation (slot counts, 24h swaps),
+ * ordering, and LIMIT/OFFSET all execute inside PostgreSQL, so only one
+ * page of rows ever leaves the database regardless of table size.
+ */
 export async function GET(request: NextRequest) {
   try {
-    const searchParams = request.nextUrl.searchParams;
-
-    const page = Math.max(1, Number(searchParams.get("page")) || 1);
-    const limit = Math.min(
-      MAX_PAGE_SIZE,
-      Math.max(1, Number(searchParams.get("limit")) || DEFAULT_PAGE_SIZE)
+    const parsed = listCabinetsSchema.safeParse(
+      searchParamsToObject(request.nextUrl.searchParams)
     );
-    const search = searchParams.get("search")?.trim() ?? "";
+    if (!parsed.success) {
+      return NextResponse.json(validationErrorResponse(parsed.error), {
+        status: 400,
+      });
+    }
+    const { page, limit, search, status } = parsed.data;
 
-    const where = search
-      ? {
-          OR: [
-            { code: { contains: search, mode: "insensitive" as const } },
-            { branch: { contains: search, mode: "insensitive" as const } },
-          ],
-        }
-      : {};
+    // Composable WHERE fragments — every value stays parameter-bound.
+    const conditions = [Prisma.sql`TRUE`];
+    if (status) conditions.push(Prisma.sql`c.status = ${status}`);
+    if (search) {
+      const like = `%${escapeLike(search)}%`;
+      conditions.push(
+        Prisma.sql`(c.code ILIKE ${like} OR c.branch ILIKE ${like})`
+      );
+    }
+    const whereSql = Prisma.join(conditions, " AND ");
 
-    // Window for "transactions in the last 24 hours".
-    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const offset = (page - 1) * limit;
 
-    const [total, cabinets] = await Promise.all([
-      prisma.cabinet.count({ where }),
-      prisma.cabinet.findMany({
-        where,
-        orderBy: { id: "asc" },
-        include: {
-          _count: {
-            select: {
-              cabinetLines: true,
-              swapTransactions: {
-                where: {
-                  created_at: { gte: since },
-                },
-              },
-            },
-          },
-          cabinetLines: {
-            select: {
-              state: true,
-            },
-          },
-        },
-      }),
+    // Page rows (sorted by 24h swap count in the database) plus the exact
+    // total for pagination metadata, fetched in parallel.
+    const [rows, countRows] = await Promise.all([
+      prisma.$queryRaw<CabinetRow[]>`
+        SELECT
+          c.id,
+          c.code,
+          c.branch,
+          c.status,
+          c.last_heartbeat,
+          COALESCE(l.line_count, 0)::int AS slot_total,
+          COALESCE(l.full_count, 0)::int AS slot_full,
+          COALESCE(t.swap_count_24h, 0)::int AS swap_count_24h
+        FROM cabinet c
+        LEFT JOIN (
+          SELECT cabinet_id,
+                 COUNT(*) AS line_count,
+                 COUNT(*) FILTER (WHERE state = 'FULL') AS full_count
+          FROM cabinet_line
+          GROUP BY cabinet_id
+        ) l ON l.cabinet_id = c.id
+        LEFT JOIN (
+          SELECT cabinet_id, COUNT(*) AS swap_count_24h
+          FROM swap_transaction
+          WHERE created_at >= NOW() - INTERVAL '24 hours'
+          GROUP BY cabinet_id
+        ) t ON t.cabinet_id = c.id
+        WHERE ${whereSql}
+        ORDER BY swap_count_24h DESC, c.id ASC
+        LIMIT ${limit} OFFSET ${offset}
+      `,
+      prisma.$queryRaw<{ total: number }[]>`
+        SELECT COUNT(*)::int AS total
+        FROM cabinet c
+        WHERE ${whereSql}
+      `,
     ]);
 
-    // Prisma cannot orderBy a *filtered* relation count, so sort in memory
-    // (stable sort keeps the id-ascending order for ties) and paginate here.
-    cabinets.sort(
-      (a, b) => b._count.swapTransactions - a._count.swapTransactions
-    );
-
-    const totalPages = Math.max(1, Math.ceil(total / limit));
-
     return NextResponse.json({
-      data: cabinets.slice((page - 1) * limit, page * limit),
+      data: rows.map((row) => ({
+        id: row.id,
+        code: row.code,
+        branch: row.branch,
+        status: row.status,
+        last_heartbeat: row.last_heartbeat,
+        slotTotal: Number(row.slot_total),
+        slotFull: Number(row.slot_full),
+        swaps24h: Number(row.swap_count_24h),
+      })),
       pagination: {
         page,
         limit,
-        total,
-        totalPages,
+        total: countRows[0]?.total ?? 0,
+        totalPages: Math.max(1, Math.ceil((countRows[0]?.total ?? 0) / limit)),
       },
     });
   } catch (error) {

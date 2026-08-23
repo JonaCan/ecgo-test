@@ -1,36 +1,94 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# ECGO Power Systems — Battery Swap Station Dashboard
 
-## Getting Started
+Dashboard manajemen stasiun tukar baterai: daftar cabinet (pencarian, filter status,
+sorting berdasarkan swap 24 jam terakhir, pagination) dan halaman detail per cabinet
+(grid 12 slot baterai dengan SOC, grafik swap per jam 24 jam terakhir, serta 20
+transaksi swap terakhir).
 
-First, run the development server:
+## Tech Stack
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+- **Next.js 16** (App Router) + React 19 + TypeScript
+- **Prisma 7** dengan driver adapter `@prisma/adapter-pg`
+- **PostgreSQL**
+- **Tailwind CSS v4** — semua styling termasuk grafik bar (tanpa library chart)
+- **Zod v4** — validasi input API dan format error yang konsisten
+- **Bun** sebagai package manager & runtime
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Cara Setup
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+1. Pastikan PostgreSQL sudah berjalan.
+2. Clone repo, lalu install dependencies:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+   ```bash
+   bun install
+   ```
 
-## Learn More
+3. Siapkan environment — salin `.env.example` ke `.env` dan sesuaikan kredensial DB:
 
-To learn more about Next.js, take a look at the following resources:
+   ```bash
+   cp .env.example .env
+   ```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+4. Jalankan migrasi untuk membuat tabel:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+   ```bash
+   bunx --bun prisma migrate dev
+   ```
 
-## Deploy on Vercel
+5. Seed data (50 cabinet, 600 slot, 20.000 transaksi tersebar 30 hari):
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+   ```bash
+   bunx --bun prisma db seed
+   ```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+6. Jalankan dev server:
+
+   ```bash
+   bun dev
+   ```
+
+7. Buka <http://localhost:3000>.
+
+## Asumsi
+
+- SOC bernilai 0–100 dan konsisten dengan state (mis. FULL = 100%).
+- Transaksi swap hanya terjadi pada cabinet ONLINE; `swap_type` bernilai `IN`/`OUT`.
+- `last_heartbeat` adalah indikator terakhir cabinet hidup; OFFLINE diasumsikan
+  hilang heartbeat berhari-hari.
+- Pencarian bersifat substring case-insensitive pada kode dan cabang.
+- Waktu ditampilkan sesuai timezone browser klien.
+
+## Trade-off
+
+| Keputusan | Alternatif yang ditinggalkan | Alasan |
+| --- | --- | --- |
+| Offset pagination | Cursor-based | Total count dibutuhkan UI; dataset kecil; data tidak sering berubah. |
+| Raw SQL untuk list cabinet (`ORDER BY` + `LIMIT/OFFSET` di database) | Sort + paginate di memori setelah `findMany` | Prisma tidak mendukung orderBy based on filtered relation sehingga menggunaka raw SQL lebih baik untuk performance dan scaling jika nanti data yang ada jumlahnya sudah banyak. |
+| Client components untuk kedua halaman | Server components + form actions | Debounce search, toggle filter, dan pagination lebih cocok sebagai state klien; state juga menjadi shareable karena tertera di dalam URL |
+
+## Keputusan Desain
+
+### Pagination: offset (bukan cursor)
+
+Alasan memilih **offset pagination**:
+
+**Dataset kecil dan relatif statis** — ±50 cabinet; risiko item bergeser di
+antara halaman (duplikat/terlewat saat data berubah) dapat diabaikan, sedangkan
+cursor justru menambah kompleksitas (perlu kursor stabil berdasarkan kombinasi
+kolom sort).
+
+## Apa yang Belum Selesai
+
+- [ ] **Indeks komposit** `(cabinet_id, created_at)` pada `swap_transaction` untuk
+      mempercepat query 24 jam dan agregasi hourly.
+- [ ] **Real-time update** — status cabinet dan transaksi baru tidak live;
+      butuh polling berkala atau WebSocket/SSE.
+- [ ] **Responsive mobile** — layout dioptimalkan untuk desktop; tabel perlu
+      pola card/list di layar kecil.
+- [ ] **Test otomatis** — belum ada unit/integration test.
+- [ ] **Enum di database** — `status`/`state`/`swap_type` masih string bebas. Validasi hanya di boundary API.
+
+## AI Tool yang Dipakai
+
+- **OpenCode** — documentation, planning (analisis requirement & penyusunan rencana), scaffolding
+  code boilerplate, dan code review.

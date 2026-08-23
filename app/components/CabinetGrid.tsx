@@ -2,6 +2,15 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 
 interface CabinetLine {
   id: number;
@@ -23,6 +32,16 @@ interface TransactionsResponse {
   data: SwapTransaction[];
   /** Total swaps for this cabinet in the last 24 hours. */
   total: number;
+}
+
+interface HourlyBucket {
+  /** ISO timestamp of the bucket start (top of the hour). */
+  hour: string;
+  count: number;
+}
+
+interface HourlySwapsResponse {
+  data: HourlyBucket[];
 }
 
 interface Cabinet {
@@ -124,6 +143,110 @@ function formatTxnTime(iso: string): string {
   }).format(new Date(iso));
 }
 
+/** "14:00" style label for a bucket start. */
+function formatHourLabel(iso: string): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date(iso));
+}
+
+interface ChartPoint {
+  /** "14:00" — used as the x-axis label and tooltip title. */
+  label: string;
+  count: number;
+}
+
+/** Dark-themed tooltip matching the dashboard's slate/green palette. */
+function ChartTooltip({
+  active,
+  payload,
+}: {
+  active?: boolean;
+  payload?: { payload?: ChartPoint }[];
+}) {
+  if (!active || !payload?.length) return null;
+  const point = payload[0].payload;
+  if (!point) return null;
+  return (
+    <div className="rounded-lg border border-slate-700 bg-slate-950/95 px-3 py-1.5 text-xs font-mono text-slate-200 shadow-xl">
+      {point.label} · {point.count} swaps
+    </div>
+  );
+}
+
+/**
+ * Hourly swap bar chart powered by Recharts.
+ * One bar per hourly bucket; the API always returns exactly 24 buckets.
+ */
+function HourlySwapsChart({
+  buckets,
+  loading,
+  error,
+}: {
+  buckets: HourlyBucket[];
+  loading: boolean;
+  error: string | null;
+}) {
+  const data: ChartPoint[] = buckets.map((b) => ({
+    label: formatHourLabel(b.hour),
+    count: b.count,
+  }));
+  const hasActivity = data.some((d) => d.count > 0);
+
+  return (
+    <div className="bg-slate-800 rounded-2xl border border-slate-700 shadow-2xl overflow-hidden">
+      {/* Chart header */}
+      <div className="bg-slate-900 px-5 py-4 border-b border-slate-700">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-bold text-white">Swaps per Hour</h2>
+          <span className="text-[10px] font-mono uppercase tracking-wider text-slate-500">
+            Last 24 Hours
+          </span>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center py-12 text-slate-300">
+          <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-green-400"></div>
+          <span className="ml-3">Loading chart...</span>
+        </div>
+      ) : error ? (
+        <div className="py-12 text-center text-red-400">Error: {error}</div>
+      ) : !hasActivity ? (
+        <div className="py-12 text-center text-sm text-slate-400">
+          No swap activity in the last 24 hours.
+        </div>
+      ) : (
+        <div className="p-4 pt-6 pr-2">
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: -18 }}>
+              <CartesianGrid vertical={false} stroke="#334155" strokeDasharray="3 3" />
+              <XAxis
+                dataKey="label"
+                tick={{ fill: "#64748b", fontSize: 10, fontFamily: "var(--font-geist-mono)" }}
+                tickLine={false}
+                axisLine={{ stroke: "#475569" }}
+                interval={2}
+              />
+              <YAxis
+                allowDecimals={false}
+                tick={{ fill: "#64748b", fontSize: 10, fontFamily: "var(--font-geist-mono)" }}
+                tickLine={false}
+                axisLine={false}
+                width={48}
+              />
+              <Tooltip content={<ChartTooltip />} cursor={{ fill: "rgba(148,163,184,0.08)" }} />
+              <Bar dataKey="count" fill="#22c55e" radius={[4, 4, 0, 0]} maxBarSize={28} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function CabinetGrid({ cabinetId, className }: CabinetGridProps) {
   const [cabinet, setCabinet] = useState<Cabinet | null>(null);
   const [loading, setLoading] = useState(true);
@@ -132,6 +255,9 @@ export function CabinetGrid({ cabinetId, className }: CabinetGridProps) {
   const [txnTotal, setTxnTotal] = useState(0);
   const [txnLoading, setTxnLoading] = useState(true);
   const [txnError, setTxnError] = useState<string | null>(null);
+  const [hourlyBuckets, setHourlyBuckets] = useState<HourlyBucket[]>([]);
+  const [hourlyLoading, setHourlyLoading] = useState(true);
+  const [hourlyError, setHourlyError] = useState<string | null>(null);
 
   useEffect(() => {
     async function fetchCabinet() {
@@ -171,6 +297,28 @@ export function CabinetGrid({ cabinetId, className }: CabinetGridProps) {
       }
     }
     fetchTransactions();
+  }, [cabinetId]);
+
+  useEffect(() => {
+    async function fetchHourlySwaps() {
+      setHourlyLoading(true);
+      setHourlyError(null);
+      try {
+        const res = await fetch(`/api/cabinets/${cabinetId}/hourly-swaps`, {
+          cache: "no-store",
+        });
+        if (!res.ok) throw new Error("Failed to fetch hourly swaps");
+        const json: HourlySwapsResponse = await res.json();
+        setHourlyBuckets(json.data);
+      } catch (err) {
+        setHourlyError(
+          err instanceof Error ? err.message : "An unexpected error occurred"
+        );
+      } finally {
+        setHourlyLoading(false);
+      }
+    }
+    fetchHourlySwaps();
   }, [cabinetId]);
 
   if (loading) {
@@ -322,8 +470,14 @@ export function CabinetGrid({ cabinetId, className }: CabinetGridProps) {
             </div>
           </div>
 
-          {/* Right Column: Swap Transactions (latest 20 of last 24 hours) */}
-          <div className="w-full lg:flex-1 min-w-0">
+          {/* Right Column: Hourly chart + Swap Transactions (latest 20 of last 24 hours) */}
+          <div className="w-full lg:flex-1 min-w-0 space-y-6">
+            <HourlySwapsChart
+              buckets={hourlyBuckets}
+              loading={hourlyLoading}
+              error={hourlyError}
+            />
+
             <div className="bg-slate-800 rounded-2xl border border-slate-700 shadow-2xl overflow-hidden flex flex-col">
               {/* Panel Header */}
               <div className="bg-slate-900 px-5 py-4 border-b border-slate-700">

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { cabinetIdSchema, validationErrorResponse } from "@/lib/validations";
 
 /** How many of the most recent swaps to return alongside the 24h total. */
 const RECENT_LIMIT = 20;
@@ -10,10 +11,14 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const cabinetId = Number(id);
-    if (!Number.isInteger(cabinetId) || cabinetId <= 0) {
-      return NextResponse.json({ error: "Invalid cabinet id" }, { status: 400 });
+
+    const parsed = cabinetIdSchema.safeParse({ id });
+    if (!parsed.success) {
+      return NextResponse.json(validationErrorResponse(parsed.error), {
+        status: 400,
+      });
     }
+    const cabinetId = parsed.data.id;
 
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const where = {
