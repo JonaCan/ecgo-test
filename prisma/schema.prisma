@@ -19,6 +19,7 @@ model cabinet {
   status           String
   last_heartbeat   DateTime?
   cabinetLines     cabinet_line[]
+  swapTransactions swap_transaction[]
 }
 
 model cabinet_line {
@@ -28,4 +29,15 @@ model cabinet_line {
   state            String
   soc_battery      Int                @default(0)
   cabinet          cabinet            @relation(fields: [cabinet_id], references: [id])
+  swapTransactions swap_transaction[]
+}
+
+model swap_transaction {
+  id              String       @id @default(uuid()) @db.Uuid
+  cabinet_id      Int
+  cabinet_line_id Int
+  swap_type       String       @default("OUT")
+  created_at      DateTime     @default(now())
+  cabinet         cabinet      @relation(fields: [cabinet_id], references: [id])
+  cabinetLine     cabinet_line @relation(fields: [cabinet_line_id], references: [id])
 }
