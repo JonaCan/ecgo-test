@@ -6,7 +6,13 @@ const globalForPrisma = globalThis as unknown as {
 };
 
 function createPrismaClient() {
-  const connectionString = `${process.env.DATABASE_URL}`;
+  const user = encodeURIComponent(process.env.DB_USER || "postgres");
+  const password = encodeURIComponent(process.env.DB_PASSWORD || "");
+  const host = process.env.DB_HOST || "localhost";
+  const port = parseInt(process.env.DB_PORT || "5432", 10);
+  const dbName = process.env.DB_NAME || "mydb";
+  const schema = process.env.DB_SCHEMA || "public";
+  const connectionString = `postgresql://${user}:${password}@${host}:${port}/${dbName}?schema=${schema}`;
   const adapter = new PrismaPg({ connectionString });
   return new PrismaClient({ adapter });
 }
