@@ -16,6 +16,65 @@ transaksi swap terakhir).
 
 ## Cara Setup
 
+### Opti 1: With Docker (Automatic setup DB)
+
+1. Salin .env.example menjadi .env.docker:
+  ```bash
+  cp .env.example .env.docker
+  ```
+  
+2. **PENTING**: Ubah variabel DB_HOST dari localhost menjadi postgres pada file .env.docker.
+
+3. Jalankan container:
+  ```bash
+  docker compose up -d --build
+  ```
+  
+4. Buka <http://localhost:3000>.
+
+### Opti 2: With npm
+
+1. Pastikan PostgreSQL sudah berjalan.
+2. Clone repo, lalu install dependencies:
+
+   ```bash
+   npm install
+   ```
+
+3. Siapkan environment — salin `.env.example` ke `.env` dan sesuaikan kredensial DB:
+
+   ```bash
+   cp .env.example .env
+   ```
+
+4. Jalankan migrasi untuk membuat tabel:
+
+   ```bash
+   npx prisma migrate dev
+   ```
+
+5. Generate prisma client
+
+  ```bash
+   npx prisma generate
+   ```
+
+6. Seed data (50 cabinet, 600 slot, 20.000 transaksi tersebar 30 hari):
+
+   ```bash
+   npx prisma db seed
+   ```
+
+7. Jalankan dev server:
+
+   ```bash
+   npm run dev
+   ```
+
+8. Buka <http://localhost:3000>.
+
+### Opti 3: With bun
+
 1. Pastikan PostgreSQL sudah berjalan.
 2. Clone repo, lalu install dependencies:
 
@@ -32,22 +91,28 @@ transaksi swap terakhir).
 4. Jalankan migrasi untuk membuat tabel:
 
    ```bash
-   bunx --bun prisma migrate dev
+   bunx prisma migrate dev
    ```
 
-5. Seed data (50 cabinet, 600 slot, 20.000 transaksi tersebar 30 hari):
+5. Generate prisma client
+
+  ```bash
+   bunx prisma generate
+   ```
+
+6. Seed data (50 cabinet, 600 slot, 20.000 transaksi tersebar 30 hari):
 
    ```bash
-   bunx --bun prisma db seed
+   bunx prisma db seed
    ```
 
-6. Jalankan dev server:
+7. Jalankan dev server:
 
    ```bash
    bun dev
    ```
 
-7. Buka <http://localhost:3000>.
+8. Buka <http://localhost:3000>.
 
 ## Asumsi
 
