@@ -157,3 +157,6 @@ kolom sort).
 
 - **OpenCode** — documentation, planning (analisis requirement & penyusunan rencana), scaffolding
   code boilerplate, dan code review.
+
+## Other framework
+- [Nuxt Version](https://github.com/JonaCan/ecgo-nuxt)
