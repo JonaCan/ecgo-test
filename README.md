@@ -19,16 +19,16 @@ transaksi swap terakhir).
 ### Opti 1: With Docker (Automatic setup DB)
 
 1. Salin .env.example menjadi .env.docker:
-  ```bash
-  cp .env.example .env.docker
-  ```
+   ```bash
+   cp .env.example .env.docker
+   ```
   
 2. **PENTING**: Ubah variabel DB_HOST dari localhost menjadi postgres pada file .env.docker.
 
 3. Jalankan container:
-  ```bash
-  docker compose up -d --build
-  ```
+   ```bash
+   docker compose up -d --build
+   ```
   
 4. Buka <http://localhost:3000>.
 
@@ -55,7 +55,7 @@ transaksi swap terakhir).
 
 5. Generate prisma client
 
-  ```bash
+   ```bash
    npx prisma generate
    ```
 
@@ -96,7 +96,7 @@ transaksi swap terakhir).
 
 5. Generate prisma client
 
-  ```bash
+   ```bash
    bunx prisma generate
    ```
 
